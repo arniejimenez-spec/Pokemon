@@ -1,0 +1,32 @@
+# ── Competition engine — NOT open-source, must not be shared/republished ──
+# (per the ptcgProgram README and the Kaggle competition rules). Obtain it from
+# the Kaggle competition Data page and place it locally; it is never committed.
+cg/
+ptcg_engine/
+sample_submission/
+submission/cg/
+submission.tar.gz
+
+# ── Copyrighted Pokémon card data ("Pokémon Elements": names, text, images) ──
+*.pdf
+EN_Card_Data.csv
+JP_Card_Data.csv
+decks/all_cards.json
+decks/all_attacks.json
+
+# ── Build artifacts: agent modules copied into the bundle by make_submission.py ──
+# (source of truth lives in agents/; these are copies)
+submission/heuristic.py
+submission/search_core.py
+submission/search_agent.py
+submission/opponent_model.py
+
+# ── Python / OS ──
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+Thumbs.db
+
+# Local Claude Code settings (per-user)
+.claude/settings.local.json
