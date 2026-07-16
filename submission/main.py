@@ -1,15 +1,15 @@
 """Kaggle entrypoint: Pokemon TCG AI Battle Challenge.
 
-Currently ships the plain heuristic policy. The determinized search agent
-(search_agent.py) scored *worse* on the live ladder (456 vs 601) despite winning
-67-75% against this heuristic locally -- because every local search evaluation
-used this same heuristic as the opponent, which is exactly the opponent policy the
-search assumes in its rollouts. Do not ship search again without an evaluation
-against opponents that are not this heuristic.
+Ships the learned option-scoring policy (policy.npz, pure-numpy inference).
+Falls back to the heuristic automatically if the model is missing or errors --
+a crash forfeits the episode on the ladder.
+
+History: the determinized search agent scored 456 vs the heuristic's 601 and is
+not shipped (see README).
 """
 import os
 
-from heuristic import make_agent
+from policy_agent import make_agent
 
 
 def read_deck_csv() -> list[int]:
