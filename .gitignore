@@ -39,3 +39,5 @@ data/
 *.npz
 submission/features.py
 submission/policy_agent.py
+ckpt/
+ckpt_smoke/
