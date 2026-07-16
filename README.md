@@ -82,6 +82,44 @@ submission/        main.py + deck.csv (Kaggle entrypoint)
 2. Place the engine package at `cg/` in the repo root (so `from cg.api import ...` resolves).
 3. `python smoke_test.py` to confirm the engine loads.
 4. `python harness.py` or `python run_gauntlet.py` to evaluate.
-5. `python make_submission.py` to build the upload bundle.
 
-Requires Python 3.x. No third-party dependencies beyond the competition SDK.
+Requires Python 3.x + numpy. Training additionally needs torch (see below); the
+*submission* never does — inference is pure numpy.
+
+## Submitting
+
+The agents are a **portfolio, not branches** — they share the encoder, harness, decks
+and engine wrapper, so they live side by side on `main`. One command builds any of them:
+
+```bash
+python make_submission.py --agent policy --model models/policy_rl_it12.npz --note "RL it12"
+python make_submission.py --agent heuristic --note "baseline"
+```
+
+Each build assembles the bundle from scratch, writes a **`MANIFEST.json`** inside it
+(agent, git SHA, model sha256, build time) so a downloaded tarball always says what it
+is, and **validates itself** — extract, import, play a real self-play game, and assert
+the model actually loaded (a silent heuristic fallback would otherwise pass while
+shipping the wrong agent).
+
+Then record it, and fill in the rating once the ladder settles:
+
+```bash
+python log_submission.py --note "RL it12"          # appends a row to EXPERIMENTS.md
+python log_submission.py --row 5 --rating 640 --verdict "beats baseline"
+```
+
+Every submitted build is also git-tagged (`sub-<date>-<agent>`), so the exact code
+behind any ladder score is recoverable. See [EXPERIMENTS.md](EXPERIMENTS.md) — this
+exists because we once could not tell whether a 601 belonged to the heuristic or the
+search agent, and lost a day to the ambiguity.
+
+## Training pipeline
+
+```bash
+python train/gen_bc_data.py --games 6000 --workers 7   # heuristic self-play -> data/bc_data.npz
+# upload bc_data.npz as a private Kaggle Dataset, train on a GPU notebook (T4 -- NOT
+# P100: sm_60 is incompatible with Kaggle's torch build), download policy.npz
+python train/rl_loop.py --iters 12 --games 1400        # self-play RL, runs locally on CPU
+python select_ckpt.py                                  # re-evaluate top checkpoints properly
+```
