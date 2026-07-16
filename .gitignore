@@ -30,3 +30,6 @@ Thumbs.db
 
 # Local Claude Code settings (per-user)
 .claude/settings.local.json
+
+# Generated training data (large; upload to Kaggle as a private Dataset instead)
+data/
