@@ -1,10 +1,19 @@
 """Opponent modeling for determinization.
 
-The mirror prior (assume the opponent runs our deck) is wrong against a diverse
-ladder. Here we infer the opponent's dominant energy type from the Pokémon and
-energy we can see, then hand back a plausible type-matched 60-card prior for the
-hidden bulk (their deck/hand/prizes). Falls back to the mirror prior when we
-haven't seen enough to guess.
+v1 used weak per-type template decks as priors — that backfired on the ladder:
+modeling the opponent as a vanilla pile makes rollouts underestimate real threats,
+and observed opponent cards that aren't in the template create inconsistent worlds
+(failed determinizations degrade the agent to heuristic-quality moves).
+
+v2 keeps the strength of the mirror prior but adapts it with evidence:
+
+  prior = every opponent card we've actually observed
+        + copies of their observed Pokémon lines (assume they run 3 of each)
+        + our own deck's trainer skeleton as generic strong filler
+        + basic energy matching their observed dominant type
+
+Observed cards are in the prior by construction, so the determinizer's
+subtraction (prior − observed) is always consistent.
 """
 from collections import Counter
 
@@ -15,31 +24,32 @@ try:
 except ImportError:
     from search_core import CARD_DB
 
-# Self-contained per-type prior template (no dependency on the local decks/ package,
-# so this ships in the flat Kaggle bundle). Same "one big Basic attacker + generic
-# consistency shell + type energy" pattern used by the eval gauntlet.
-_SHELL = [
-    (140, 2), (1121, 4), (1102, 4), (1231, 2), (1097, 3), (1123, 4),
-    (1174, 2), (1122, 3), (1182, 4), (1224, 4), (1208, 4), (1213, 2), (1199, 1),
-]
-
-
-def _template(attacker_id: int, energy_id: int) -> list[int]:
-    deck = [cid for cid, n in _SHELL for _ in range(n)] + [attacker_id] * 4
-    return deck + [energy_id] * (60 - len(deck))
-
-
-# Representative mono-energy Basic-ex attacker per type. Priors only, not pilotable
-# decks. Water/Lightning omitted (no clean mono-energy Basic-ex in pool) -> those
-# opponents fall back to the mirror prior.
-_TYPE_TEMPLATE = {
-    EnergyType.FIRE:     _template(46, 2),    # Gouging Fire ex
-    EnergyType.PSYCHIC:  _template(184, 5),   # Latias ex
-    EnergyType.FIGHTING: _template(979, 6),   # Koraidon ex
-    EnergyType.DARKNESS: _template(1062, 7),  # Yveltal ex
-    EnergyType.METAL:    _template(336, 8),   # Zacian ex
-    EnergyType.GRASS:    _template(75, 1),    # Iron Leaves ex
+# Basic energy card id per EnergyType (G=1 R=2 W=3 L=4 P=5 F=6 D=7 M=8)
+_ENERGY_CARD = {
+    EnergyType.GRASS: 1, EnergyType.FIRE: 2, EnergyType.WATER: 3,
+    EnergyType.LIGHTNING: 4, EnergyType.PSYCHIC: 5, EnergyType.FIGHTING: 6,
+    EnergyType.DARKNESS: 7, EnergyType.METAL: 8,
 }
+
+
+def observed_opponent_cards(obs: Observation, me: int) -> Counter:
+    """Every opponent card id we can currently see (board, attachments, discard)."""
+    op = obs.current.players[1 - me]
+    seen: Counter = Counter()
+    for c in op.discard:
+        seen[c.id] += 1
+    for area in (op.active, op.bench):
+        for mon in area:
+            if mon is None:
+                continue
+            seen[mon.id] += 1
+            for e in mon.energyCards:
+                seen[e.id] += 1
+            for t in mon.tools:
+                seen[t.id] += 1
+            for pe in mon.preEvolution:
+                seen[pe.id] += 1
+    return seen
 
 
 def infer_opponent_type(obs: Observation, me: int) -> EnergyType | None:
@@ -50,30 +60,23 @@ def infer_opponent_type(obs: Observation, me: int) -> EnergyType | None:
     op = st.players[1 - me]
     votes: Counter = Counter()
 
-    def add_mon(mon, weight):
-        if mon is None:
-            return
-        c = CARD_DB.get(mon.id)
-        if c and c.cardType == CardType.POKEMON:
-            et = c.energyType
-            if et not in (EnergyType.COLORLESS, EnergyType.RAINBOW):
-                votes[et] += weight
-        for e in (mon.energies or []):
-            if e not in (EnergyType.COLORLESS, EnergyType.RAINBOW):
-                votes[e] += weight  # attached energy is a strong signal
+    def vote(et, w):
+        if et is not None and et not in (EnergyType.COLORLESS, EnergyType.RAINBOW):
+            votes[et] += w
 
-    for mon in op.active:
-        add_mon(mon, 3)          # active attacker is the best signal
-    for mon in op.bench:
-        add_mon(mon, 2)
-    for c in op.discard:         # discarded Pokémon/energy also hint at type
+    for weight, area in ((3, op.active), (2, op.bench)):
+        for mon in area:
+            if mon is None:
+                continue
+            c = CARD_DB.get(mon.id)
+            if c and c.cardType == CardType.POKEMON:
+                vote(c.energyType, weight)
+            for e in (mon.energies or []):
+                vote(e, weight)
+    for c in op.discard:
         cd = CARD_DB.get(c.id)
-        if cd and cd.cardType == CardType.POKEMON and cd.energyType not in (
-                EnergyType.COLORLESS, EnergyType.RAINBOW):
-            votes[cd.energyType] += 1
-        elif cd and cd.cardType == CardType.BASIC_ENERGY and cd.energyType not in (
-                EnergyType.COLORLESS, EnergyType.RAINBOW):
-            votes[cd.energyType] += 1
+        if cd and cd.cardType in (CardType.POKEMON, CardType.BASIC_ENERGY):
+            vote(cd.energyType, 1)
 
     if not votes:
         return None
@@ -81,13 +84,45 @@ def infer_opponent_type(obs: Observation, me: int) -> EnergyType | None:
 
 
 class OpponentPrior:
-    """Chooses a determinization prior deck for the opponent, cached per type guess."""
+    """Evidence-adapted strong prior for the opponent's 60 cards."""
 
     def __init__(self, my_deck: list[int]):
         self.mirror = list(my_deck)
+        # our trainer skeleton (non-Pokemon, non-energy) = generic strong filler
+        self.trainer_skeleton = [
+            cid for cid in my_deck
+            if (c := CARD_DB.get(cid)) and c.cardType in (
+                CardType.ITEM, CardType.SUPPORTER, CardType.TOOL, CardType.STADIUM)
+        ]
 
     def prior_for(self, obs: Observation, me: int) -> list[int]:
+        if obs.current is None:
+            return self.mirror
+
+        seen = observed_opponent_cards(obs, me)
+        if not seen:
+            return self.mirror
+
+        prior: list[int] = list(seen.elements())
+
+        # assume ~3 copies of each observed opponent Pokemon line (cap at 4 total)
+        for cid, n in seen.items():
+            c = CARD_DB.get(cid)
+            if c and c.cardType == CardType.POKEMON:
+                prior += [cid] * max(0, min(4, n + 2) - n)
+
+        # energy filler in their dominant type
         et = infer_opponent_type(obs, me)
-        if et is not None and et in _TYPE_TEMPLATE:
-            return _TYPE_TEMPLATE[et]
-        return self.mirror
+        energy_id = _ENERGY_CARD.get(et, 6)
+        n_energy_seen = sum(n for cid, n in seen.items()
+                            if (c := CARD_DB.get(cid)) and c.cardType == CardType.BASIC_ENERGY)
+        prior += [energy_id] * max(0, 12 - n_energy_seen)
+
+        # top up to 60 with our trainer skeleton (generic competitive filler)
+        for cid in self.trainer_skeleton:
+            if len(prior) >= 60:
+                break
+            prior.append(cid)
+        # still short (tiny skeleton?) -> pad energy
+        prior += [energy_id] * (60 - len(prior))
+        return prior[:60]

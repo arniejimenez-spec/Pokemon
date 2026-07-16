@@ -22,7 +22,7 @@ except ImportError:
 
 class SearchAgent:
     def __init__(self, deck: list[int], opp_prior: list[int] | None = None,
-                 time_budget: float = 0.15, horizon: int = 3,
+                 time_budget: float = 0.10, horizon: int = 3,
                  max_candidates: int = 4, min_rollouts_per_cand: int = 1,
                  model_opponent: bool = True, seed: int = 0):
         self.deck = deck
@@ -98,24 +98,40 @@ class SearchAgent:
         cand = self._candidates(obs)
 
         stats = {i: [0.0, 0] for i in cand}  # index -> [sum_value, n]
-        deadline = time.perf_counter() + self.time_budget
+        start = time.perf_counter()
+        deadline = start + self.time_budget
+        # absolute cap: no new rollout starts after `deadline`, and rollouts
+        # in flight abort at `hard_deadline`. Nothing overrides these — on slow
+        # hardware we'd rather play the heuristic move than time out the episode.
+        hard_deadline = start + self.time_budget * 2
 
-        # guarantee a minimum, then keep going until the budget runs out
-        rounds = 0
-        while True:
-            for i in cand:
-                if stats[i][1] >= self.min_rollouts and time.perf_counter() >= deadline:
-                    continue
-                v = self._rollout_option(obs, i, me)
-                if v is not None:
+        failures = 0
+        done = False
+        while not done:
+            progressed = False
+            for i in cand:  # cand is heuristic-ranked: best candidates sample first
+                if time.perf_counter() >= deadline:
+                    done = True
+                    break
+                v = self._rollout_option(obs, i, me, hard_deadline)
+                if v is None:
+                    failures += 1
+                    # determinization/search keeps failing: bail to heuristic fast
+                    if failures >= 2 * len(cand) and not any(c for _, c in stats.values()):
+                        done = True
+                        break
+                else:
                     stats[i][0] += v
                     stats[i][1] += 1
-            rounds += 1
-            enough = all(stats[i][1] >= self.min_rollouts for i in cand)
-            if enough and time.perf_counter() >= deadline:
+                    progressed = True
+            if not progressed and failures:
                 break
-            if rounds > 200:  # safety
-                break
+
+        # self-tune to slow hardware: if this decision badly overran the budget,
+        # shorten the horizon for the rest of the game
+        elapsed = time.perf_counter() - start
+        if elapsed > 3 * self.time_budget and self.horizon > 1:
+            self.horizon -= 1
 
         # pick best mean value; fall back to heuristic's top choice on ties/empties
         best_i, best_v = None, -1e18
@@ -152,8 +168,13 @@ class SearchAgent:
                 cand.append(i)
         return cand
 
-    def _rollout_option(self, obs: Observation, opt_index: int, me: int):
-        """Apply `opt_index`, then roll out with the heuristic to the horizon; return value."""
+    def _rollout_option(self, obs: Observation, opt_index: int, me: int,
+                        hard_deadline: float | None = None):
+        """Apply `opt_index`, then roll out with the heuristic to the horizon; return value.
+
+        Aborts (returning the partial-state value) once `hard_deadline` passes, so a
+        single slow rollout can never blow the per-move time limit.
+        """
         world = determinize(obs, self.deck, self._cur_prior, self.rng)
         try:
             root = search_begin(obs, *world)
@@ -166,6 +187,8 @@ class SearchAgent:
             steps = 0
             while cur.current is None or cur.current.result == -1:
                 if cur.current and (cur.current.turn - start_turn) >= self.horizon:
+                    break
+                if hard_deadline is not None and time.perf_counter() >= hard_deadline:
                     break
                 sel_list = self.policy.select(cur)
                 state = search_step(state.searchId, sel_list)

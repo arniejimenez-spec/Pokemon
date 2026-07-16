@@ -1,7 +1,15 @@
-"""Kaggle entrypoint: Pokemon TCG AI Battle Challenge — determinized-rollout search agent."""
+"""Kaggle entrypoint: Pokemon TCG AI Battle Challenge.
+
+Currently ships the plain heuristic policy. The determinized search agent
+(search_agent.py) scored *worse* on the live ladder (456 vs 601) despite winning
+67-75% against this heuristic locally -- because every local search evaluation
+used this same heuristic as the opponent, which is exactly the opponent policy the
+search assumes in its rollouts. Do not ship search again without an evaluation
+against opponents that are not this heuristic.
+"""
 import os
 
-from search_agent import make_agent
+from heuristic import make_agent
 
 
 def read_deck_csv() -> list[int]:
