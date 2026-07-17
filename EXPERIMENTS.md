@@ -14,6 +14,7 @@ games. Only the latest 2 submissions are tracked for final scoring.
 | 3 | 2026-07-16 | heuristic | revert to known-good | `8ff2967` | — | 399 @1h | identical to #4 — see noise note |
 | 4 | 2026-07-16 | heuristic | revert, 2nd copy to flush #2 | `8ff2967` | — | **447.8** | settled. identical code read 601 on day 1 — see drift note |
 | 5 | 2026-07-16 | policy | RL it12 (BC + 12 self-play iters) | `f8e7e65` | policy_rl_it12.npz | **552.6** | RL beats heuristic by +105 concurrent — first real gain |
+| 6 | 2026-07-17 | policy | RL it18: +24 iters from it12; 58.0% vs it12 @300 games (it13 54.3, it24 52.3) | `b4a243b` | policy_rl_it18.npz | pending | challenger vs it12 (concurrent floor) |
 
 ## What each rating taught us
 
@@ -63,4 +64,3 @@ iterations. Whether any of that maps to ladder points is exactly what #5 tests.
 The `search` row is the cautionary tale: **75% local → 456 ladder.** Any future row
 claiming a big local win against our own heuristic should be assumed circular until the
 ladder says otherwise.
-| 6 | 2026-07-17 | policy | RL it18: +24 iters from it12; 58.0% vs it12 @300 games (it13 54.3, it24 52.3) | `b4a243b` | policy_rl_it18.npz | pending |  |

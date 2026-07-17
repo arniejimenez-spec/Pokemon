@@ -60,10 +60,15 @@ def append(note: str, rating: str):
            f"{note or man.get('note','')} | `{man['git']}` | "
            f"{man.get('model','—')} | {rating or 'pending'} |  |")
     ensure_log()
-    with open(LOG, "a", encoding="utf-8") as f:
-        f.write(row + "\n")
+    # insert directly after the last table row (NOT at EOF -- prose follows the table)
+    with open(LOG, encoding="utf-8") as f:
+        lines = f.read().splitlines()
+    last = max(i for i, l in enumerate(lines) if re.match(r"^\|\s*\d+\s*\|", l))
+    lines.insert(last + 1, row)
+    with open(LOG, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
     print(row)
-    print(f"\nappended row {n} to EXPERIMENTS.md")
+    print(f"\ninserted row {n} into EXPERIMENTS.md table")
 
 
 def set_rating(row_id: int, rating: str, verdict: str):
