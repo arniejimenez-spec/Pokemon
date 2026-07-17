@@ -252,7 +252,13 @@ def rl_update(model_path, data, lr, epochs, batch, ent_coef, clip_kl):
 
             v = head_v(h[first]).squeeze(-1)
             adv = (R[dec] - v).detach()
-            adv = (adv - adv.mean()) / (adv.std() + 1e-6)   # normalise: big variance otherwise
+            # Centre always; divide by std ONLY when it is healthy. Late in training a
+            # batch can be nearly all-wins with a well-fit value head -> std ~ 0, and
+            # dividing by it explodes the gradients into NaN (killed a whole run).
+            adv = adv - adv.mean()
+            astd = adv.std()
+            if astd > 1e-2:
+                adv = adv / astd
 
             # entropy bonus keeps the policy from collapsing onto one option
             p = ex / denom[seg]
@@ -263,6 +269,11 @@ def rl_update(model_path, data, lr, epochs, batch, ent_coef, clip_kl):
             loss_v = ((v - R[dec]) ** 2).mean()
             loss = loss_pi + 0.5 * loss_v
 
+            # NaN guard: clip_grad_norm passes NaN straight through, and one bad
+            # batch poisons the weights for the rest of the run. Skip it instead.
+            if not torch.isfinite(loss):
+                optim.zero_grad()
+                continue
             optim.zero_grad(); loss.backward()
             torch.nn.utils.clip_grad_norm_(params, 1.0)
             optim.step()
@@ -337,6 +348,11 @@ def main():
                                                       args.batch, args.ent, None)
         path = os.path.join(args.outdir, f"policy_it{it}.npz")
         export(path, trunk, hpi, hv, emb, norm, fv)
+        z = np.load(path)
+        if not all(np.all(np.isfinite(z[k])) for k in z.files):
+            print(f"[iter {it}] exported weights contain non-finite values -- "
+                  f"discarding this iteration, continuing from previous checkpoint")
+            continue
         t_train = time.perf_counter() - t1
 
         vs_heur, vs_bc = evaluate(path, args.eval_games, baseline_path=frozen_bc)
