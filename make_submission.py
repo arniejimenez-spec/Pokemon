@@ -37,7 +37,7 @@ OUT = os.path.join(ROOT, "submission.tar.gz")
 # agent -> (modules copied into the bundle, main.py import line, needs a model file)
 AGENTS = {
     "heuristic": (["heuristic.py"], "from heuristic import make_agent", False),
-    "policy": (["heuristic.py", "features.py", "policy_agent.py"],
+    "policy": (["heuristic.py", "features.py", "features_v2.py", "policy_agent.py"],
                "from policy_agent import make_agent", True),
     "search": (["heuristic.py", "search_core.py", "search_agent.py", "opponent_model.py"],
                "from search_agent import make_agent", False),
