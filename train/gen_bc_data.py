@@ -29,12 +29,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def _play_games(args):
     """Worker: play `n_games` and return arrays for the decisions seen."""
-    n_games, seed, opp_name, epsilon = args
+    n_games, seed, opp_name, epsilon, fv = args
 
     from decks.mega_lucario import DECK as LUCARIO
     from decks.gauntlet import GAUNTLET
     from agents.heuristic import HeuristicPolicy
-    from agents import features as F
+    if fv == 2:
+        from agents import features_v2 as F
+    else:
+        from agents import features as F
     from cg.game import battle_start, battle_select, battle_finish
     from cg.api import to_observation_class
 
@@ -44,6 +47,7 @@ def _play_games(args):
     pols = (HeuristicPolicy(LUCARIO), HeuristicPolicy(opp_deck))
 
     states, opts, ptr, ys, seats, turns = [], [], [0], [], [], []
+    opt_ids = []
     game_of_decision = []
     game_winner = []
 
@@ -64,9 +68,11 @@ def _play_games(args):
             choice = pols[seat].select(o)
 
             if recordable:
-                s, om = F.encode(o)
-                states.append(s)
-                opts.append(om)
+                enc = F.encode(o)
+                states.append(enc[0])
+                opts.append(enc[1])
+                if fv == 2:
+                    opt_ids.append(enc[2])
                 ptr.append(ptr[-1] + n_opt)
                 ys.append(choice[0])
                 seats.append(seat)
@@ -100,6 +106,7 @@ def _play_games(args):
         np.array(seats, dtype=np.int8),
         np.array(turns, dtype=np.int16),
         np.array(game_winner, dtype=np.int8),
+        (np.concatenate(opt_ids).astype(np.int16) if fv == 2 else None),
     )
 
 
@@ -108,6 +115,7 @@ def main():
     p.add_argument("--games", type=int, default=2000, help="total games across all workers")
     p.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1))
     p.add_argument("--epsilon", type=float, default=0.15, help="exploration rate (labels stay expert)")
+    p.add_argument("--fv", type=int, default=1, choices=(1, 2), help="feature version")
     p.add_argument("--out", default="data")
     p.add_argument("--seed", type=int, default=0)
     args = p.parse_args()
@@ -118,7 +126,8 @@ def main():
     jobs = []
     per_worker = max(1, args.games // args.workers)
     for w in range(args.workers):
-        jobs.append((per_worker, args.seed + w * 977, opponents[w % len(opponents)], args.epsilon))
+        jobs.append((per_worker, args.seed + w * 977, opponents[w % len(opponents)],
+                     args.epsilon, args.fv))
 
     t0 = time.perf_counter()
     from multiprocessing import Pool
@@ -146,10 +155,15 @@ def main():
     # outcome from the deciding player's perspective: +1 win, -1 loss, 0 draw
     outcome = np.where(wins == 2, 0, np.where(wins == seats, 1, -1)).astype(np.int8)
 
-    path = os.path.join(args.out, "bc_data.npz")
+    extra = {}
+    if args.fv == 2:
+        extra["opt_ids"] = np.concatenate([r[7] for r in results])
+        assert extra["opt_ids"].shape[0] == opts.shape[0], "opt_ids misaligned"
+
+    path = os.path.join(args.out, "bc_data.npz" if args.fv == 1 else "bc_data_v2.npz")
     np.savez_compressed(path, states=states, opts=opts, opt_ptr=ptr, y=ys,
                         seat=seats, turn=turns, outcome=outcome,
-                        feature_version=np.array([1], dtype=np.int32))
+                        feature_version=np.array([args.fv], dtype=np.int32), **extra)
     mb = os.path.getsize(path) / 1e6
     print(f"games={args.games} workers={args.workers} in {dt:.0f}s ({args.games/dt:.1f} games/s)")
     print(f"decisions={len(ys)}  options={opts.shape[0]}  avg_opts={opts.shape[0]/len(ys):.1f}")
