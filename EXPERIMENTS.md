@@ -63,3 +63,4 @@ iterations. Whether any of that maps to ladder points is exactly what #5 tests.
 The `search` row is the cautionary tale: **75% local → 456 ladder.** Any future row
 claiming a big local win against our own heuristic should be assumed circular until the
 ladder says otherwise.
+| 6 | 2026-07-17 | policy | RL it18: +24 iters from it12; 58.0% vs it12 @300 games (it13 54.3, it24 52.3) | `b4a243b` | policy_rl_it18.npz | pending |  |
