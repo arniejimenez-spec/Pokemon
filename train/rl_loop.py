@@ -47,7 +47,6 @@ def _selfplay(args):
     from decks.gauntlet import GAUNTLET
     from agents.policy_agent import PolicyAgent
     from agents.heuristic import HeuristicPolicy
-    from agents import features as F
     from cg.game import battle_start, battle_select, battle_finish
     from cg.api import to_observation_class
 
@@ -57,6 +56,7 @@ def _selfplay(args):
     learner = PolicyAgent(LUCARIO, model_path=model_path)
     if learner.net is None:
         return None
+    fv = learner.net.fv   # encode/logits dispatch on the model's feature version
 
     # opponent pool: our own policy (self-play), the heuristic, or a gauntlet deck
     if opp_kind == "self":
@@ -70,6 +70,7 @@ def _selfplay(args):
         opp = HeuristicPolicy(opp_deck)
 
     states, opts, ptr, ys = [], [], [0], []
+    opt_ids = []
     rewards = []
 
     for _ in range(n_games):
@@ -87,8 +88,8 @@ def _selfplay(args):
             if seat == 0:
                 learnable = (n_opt > 1 and sel.minCount == 1 and sel.maxCount == 1)
                 if learnable:
-                    s, om = F.encode(o)
-                    z = learner.net.logits(s, om)
+                    s, om, ids = learner.net.encode(o)
+                    z = learner.net.logits(s, om, ids)
                     if not np.all(np.isfinite(z)):
                         play = learner.fallback.select(o)
                     else:
@@ -97,6 +98,8 @@ def _selfplay(args):
                         p /= p.sum()
                         a = int(rng.choice(n_opt, p=p))
                         states.append(s); opts.append(om)
+                        if fv == 2:
+                            opt_ids.append(ids)
                         ptr.append(ptr[-1] + n_opt); ys.append(a)
                         play = [a]
                 else:
@@ -120,7 +123,8 @@ def _selfplay(args):
             np.concatenate(opts).astype(np.float32),
             np.array(ptr, dtype=np.int64),
             np.array(ys, dtype=np.int16),
-            np.array(rewards, dtype=np.float32))
+            np.array(rewards, dtype=np.float32),
+            (np.concatenate(opt_ids).astype(np.int64) if fv == 2 else None))
 
 
 def generate(model_path, n_games, workers, temperature, seed):
@@ -142,7 +146,8 @@ def generate(model_path, n_games, workers, temperature, seed):
         opt_list.append(r[1])
         ptr_list.extend((r[2][1:] + off).tolist())
         off += r[1].shape[0]
-    return states, np.concatenate(opt_list), np.array(ptr_list, dtype=np.int64), ys, rew
+    ids = (np.concatenate([r[5] for r in res]) if res[0][5] is not None else None)
+    return states, np.concatenate(opt_list), np.array(ptr_list, dtype=np.int64), ys, rew, ids
 
 
 # ───────────────────────────── torch model I/O ───────────────────────────────
@@ -164,18 +169,24 @@ def load_torch(model_path):
     head_pi = nn.Linear(z["Wpi"].shape[0], 1)
     head_pi.weight.data = torch.tensor(z["Wpi"].T.copy())
     head_pi.bias.data = torch.tensor(z["bpi"].copy())
-    head_v = nn.Linear(dims[-1], 1)   # BC export has no value head -> fresh, learns fast
+    head_v = nn.Linear(dims[-1], 1)   # fresh if the export has no value head
     if "Wv" in z.files:
         head_v.weight.data = torch.tensor(z["Wv"].T.copy())
         head_v.bias.data = torch.tensor(z["bv"].copy())
+    emb = None
+    if "Wemb" in z.files:            # v2: learned card-id embedding
+        Wemb = z["Wemb"]
+        emb = nn.Embedding(Wemb.shape[0], Wemb.shape[1], padding_idx=0)
+        emb.weight.data = torch.tensor(Wemb.copy())
     norm = {k: z[k] for k in ("s_mu", "s_sd", "o_mu", "o_sd")}
-    return trunk, head_pi, head_v, norm
+    fv = int(z["feature_version"][0]) if "feature_version" in z.files else 1
+    return trunk, head_pi, head_v, emb, norm, fv
 
 
-def export(path, trunk, head_pi, head_v, norm):
+def export(path, trunk, head_pi, head_v, emb, norm, fv):
     import torch.nn as nn
     w = {k: v.astype(np.float32) for k, v in norm.items()}
-    w["feature_version"] = np.array([1], dtype=np.int32)
+    w["feature_version"] = np.array([fv], dtype=np.int32)
     li = 0
     for m in trunk:
         if isinstance(m, nn.Linear):
@@ -186,6 +197,8 @@ def export(path, trunk, head_pi, head_v, norm):
     w["bpi"] = head_pi.bias.detach().numpy().astype(np.float32)
     w["Wv"] = head_v.weight.detach().numpy().T.astype(np.float32)
     w["bv"] = head_v.bias.detach().numpy().astype(np.float32)
+    if emb is not None:
+        w["Wemb"] = emb.weight.detach().numpy().astype(np.float32)
     w["n_layers"] = np.array([li], dtype=np.int32)
     np.savez_compressed(path, **w)
 
@@ -196,13 +209,16 @@ def rl_update(model_path, data, lr, epochs, batch, ent_coef, clip_kl):
     import torch
     import torch.nn as nn
 
-    states, opts, ptr, ys, rew = data
-    trunk, head_pi, head_v, norm = load_torch(model_path)
+    states, opts, ptr, ys, rew, ids = data
+    trunk, head_pi, head_v, emb, norm, fv = load_torch(model_path)
     params = list(trunk.parameters()) + list(head_pi.parameters()) + list(head_v.parameters())
+    if emb is not None:
+        params += list(emb.parameters())
     optim = torch.optim.Adam(params, lr=lr)
 
     S = torch.from_numpy(np.clip((states - norm["s_mu"]) / norm["s_sd"], -10, 10).astype(np.float32))
     O = torch.from_numpy(np.clip((opts - norm["o_mu"]) / norm["o_sd"], -10, 10).astype(np.float32))
+    IDS = torch.from_numpy(ids) if ids is not None else None
     PTR = torch.from_numpy(ptr)
     Y = torch.from_numpy(ys.astype(np.int64))
     R = torch.from_numpy(rew)
@@ -216,7 +232,10 @@ def rl_update(model_path, data, lr, epochs, batch, ent_coef, clip_kl):
             counts = (PTR[dec + 1] - PTR[dec]).long()
             rows = torch.cat([torch.arange(PTR[j], PTR[j + 1]) for j in dec])
             seg = torch.repeat_interleave(torch.arange(len(dec)), counts)
-            x = torch.cat([S[dec][seg], O[rows]], dim=1)
+            parts = [S[dec][seg], O[rows]]
+            if emb is not None:
+                parts.append(emb(IDS[rows]))
+            x = torch.cat(parts, dim=1)
 
             h = trunk(x)
             logit = head_pi(h).squeeze(-1)
@@ -248,7 +267,7 @@ def rl_update(model_path, data, lr, epochs, batch, ent_coef, clip_kl):
             torch.nn.utils.clip_grad_norm_(params, 1.0)
             optim.step()
         stats = {"entropy": float(ent.detach()), "value_loss": float(loss_v.detach())}
-    return trunk, head_pi, head_v, norm, stats
+    return trunk, head_pi, head_v, emb, norm, fv, stats
 
 
 # ───────────────────────────────── evaluation ────────────────────────────────
@@ -314,10 +333,10 @@ def main():
         t_gen = time.perf_counter() - t0
 
         t1 = time.perf_counter()
-        trunk, hpi, hv, norm, st = rl_update(cur, data, args.lr, args.epochs, args.batch,
-                                             args.ent, None)
+        trunk, hpi, hv, emb, norm, fv, st = rl_update(cur, data, args.lr, args.epochs,
+                                                      args.batch, args.ent, None)
         path = os.path.join(args.outdir, f"policy_it{it}.npz")
-        export(path, trunk, hpi, hv, norm)
+        export(path, trunk, hpi, hv, emb, norm, fv)
         t_train = time.perf_counter() - t1
 
         vs_heur, vs_bc = evaluate(path, args.eval_games, baseline_path=frozen_bc)
