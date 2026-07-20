@@ -14,8 +14,8 @@ games. Only the latest 2 submissions are tracked for final scoring.
 | 3 | 2026-07-16 | heuristic | revert to known-good | `8ff2967` | — | 399 @1h | identical to #4 — see noise note |
 | 4 | 2026-07-16 | heuristic | revert, 2nd copy to flush #2 | `8ff2967` | — | **447.8** | settled. identical code read 601 on day 1 — see drift note |
 | 5 | 2026-07-16 | policy | RL it12 (BC + 12 self-play iters) | `f8e7e65` | policy_rl_it12.npz | **552.6** | RL beats heuristic by +105 concurrent — first real gain |
-| 6 | 2026-07-17 | policy | RL it18: +24 iters from it12; 58.0% vs it12 @300 games (it13 54.3, it24 52.3) | `b4a243b` | policy_rl_it18.npz | pending | challenger vs it12 (concurrent floor) |
-| 7 | 2026-07-17 | policy | RL v2-lineage 30 iters (identity emb); 57.0% vs it18 @300 (it5 56.0, it12 52.0) | `3b13645-dirty` | policy_rl_v2_it30.npz | pending |  |
+| 6 | 2026-07-17 | policy | RL it18: +24 iters from it12; 58.0% vs it12 @300 games (it13 54.3, it24 52.3) | `b4a243b` | policy_rl_it18.npz | 499.8 | settled over weekend; concurrent pair with #7 |
+| 7 | 2026-07-17 | policy | RL v2-lineage 30 iters (identity emb); 57.0% vs it18 @300 (it5 56.0, it12 52.0) | `3b13645-dirty` | policy_rl_v2_it30.npz | 493.2 | TIE with #6 (gap 6.6 << noise): identity emb = no ladder gain |
 
 ## What each rating taught us
 
@@ -52,6 +52,18 @@ sank the search agent.
 61.5% (200 games each). But `vs_heuristic` is **contaminated** — the heuristic is in the RL
 opponent pool. The reliable local signal was self-play win rate climbing 59%→69% over 12
 iterations. Whether any of that maps to ladder points is exactly what #5 tests.
+
+**#6 vs #7 — mirror-selection has hit its ceiling.** After a full weekend (settled σ, same
+window): it18 **499.8** vs v2-it30 **493.2** — a 6.6-point gap, far below noise. A **57%
+Lucario-mirror head-to-head edge produced zero measurable ladder difference.** Both also
+sit ~50 points below where the lineage read three days earlier (552.6) — ladder drift
+again, the field keeps strengthening. Calibration so far: mirror 57–58% ⇒ ladder ~0.
+The local selection instrument (Lucario-vs-Lucario head-to-heads) optimizes something the
+ladder doesn't measure; gains that don't generalize beyond the mirror don't move rating.
+**Conclusion: stop shipping mirror-selected increments. The next changes must target
+generalization against the FIELD** — diverse-opponent training and diverse-panel
+evaluation — and/or a representation step-change (id-bag state features), not another
+2-3% mirror edge.
 
 ## Local proxies (NOT ladder truth — recorded to check calibration later)
 
