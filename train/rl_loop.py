@@ -58,10 +58,17 @@ def _selfplay(args):
         return None
     fv = learner.net.fv   # encode/logits dispatch on the model's feature version
 
-    # opponent pool: our own policy (self-play), the heuristic, or a gauntlet deck
+    # opponent pool: self-play, frozen policy checkpoints (paths), the heuristic,
+    # or heuristic-piloted gauntlet decks. Latias is deliberately NOT in the default
+    # pool — it is the eval panel's holdout deck.
     if opp_kind == "self":
         opp_deck = LUCARIO
         opp = PolicyAgent(LUCARIO, model_path=model_path)
+    elif opp_kind.endswith(".npz"):
+        opp_deck = LUCARIO
+        opp = PolicyAgent(LUCARIO, model_path=opp_kind)
+        if opp.net is None:
+            opp = HeuristicPolicy(LUCARIO)   # missing checkpoint -> scripted pilot
     elif opp_kind == "heuristic":
         opp_deck = LUCARIO
         opp = HeuristicPolicy(LUCARIO)
@@ -127,12 +134,21 @@ def _selfplay(args):
             (np.concatenate(opt_ids).astype(np.int64) if fv == 2 else None))
 
 
-def generate(model_path, n_games, workers, temperature, seed):
+def generate(model_path, n_games, workers, temperature, seed, pool_kinds=None):
     from multiprocessing import Pool
-    # mix opponents so we don't overfit to self-play quirks
-    kinds = ["self", "self", "heuristic", "zacian", "yveltal", "latias", "self"]
+    # Diverse pool (anti-mirror pivot): a 57% mirror edge measured 0 on the ladder,
+    # so training mixes frozen champion POLICIES with off-deck opponents instead of
+    # being Lucario-self-heavy. Latias is excluded -> eval holdout.
+    if pool_kinds is None:
+        pool_kinds = ["self", "heuristic", "zacian", "yveltal"]
+        for champ in ("models/policy_rl_it18.npz", "models/policy_rl_v2_it30.npz"):
+            p = os.path.join(ROOT, champ)
+            if os.path.exists(p):
+                pool_kinds.append(p)
+        pool_kinds.append("self")
     per = max(1, n_games // workers)
-    jobs = [(per, seed + w * 7919, model_path, temperature, kinds[w % len(kinds)])
+    jobs = [(per, seed + w * 7919, model_path, temperature,
+             pool_kinds[w % len(pool_kinds)])
             for w in range(workers)]
     with Pool(workers) as pool:
         res = [r for r in pool.map(_selfplay, jobs) if r is not None]
