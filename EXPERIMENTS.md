@@ -16,6 +16,7 @@ games. Only the latest 2 submissions are tracked for final scoring.
 | 5 | 2026-07-16 | policy | RL it12 (BC + 12 self-play iters) | `f8e7e65` | policy_rl_it12.npz | **552.6** | RL beats heuristic by +105 concurrent — first real gain |
 | 6 | 2026-07-17 | policy | RL it18: +24 iters from it12; 58.0% vs it12 @300 games (it13 54.3, it24 52.3) | `b4a243b` | policy_rl_it18.npz | 499.8 | settled over weekend; concurrent pair with #7 |
 | 7 | 2026-07-17 | policy | RL v2-lineage 30 iters (identity emb); 57.0% vs it18 @300 (it5 56.0, it12 52.0) | `3b13645-dirty` | policy_rl_v2_it30.npz | 493.2 | TIE with #6 (gap 6.6 << noise): identity emb = no ladder gain |
+| 8 | 2026-07-20 | policy | diversified-pool RL it12 (holdout-validated); panel agg 80.9% vs base 78.2%, latias holdout +3.2 | `0d130d5` | policy_rl_pool_it12.npz | pending |  |
 
 ## What each rating taught us
 
