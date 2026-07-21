@@ -141,7 +141,8 @@ def generate(model_path, n_games, workers, temperature, seed, pool_kinds=None):
     # being Lucario-self-heavy. Latias is excluded -> eval holdout.
     if pool_kinds is None:
         pool_kinds = ["self", "heuristic", "zacian", "yveltal"]
-        for champ in ("models/policy_rl_it18.npz", "models/policy_rl_v2_it30.npz"):
+        for champ in ("models/policy_rl_it18.npz", "models/policy_rl_v2_it30.npz",
+                      "models/policy_rl_pool_it12.npz"):
             p = os.path.join(ROOT, champ)
             if os.path.exists(p):
                 pool_kinds.append(p)
