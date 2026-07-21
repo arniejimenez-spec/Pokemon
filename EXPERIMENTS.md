@@ -15,8 +15,8 @@ games. Only the latest 2 submissions are tracked for final scoring.
 | 4 | 2026-07-16 | heuristic | revert, 2nd copy to flush #2 | `8ff2967` | — | **447.8** | settled. identical code read 601 on day 1 — see drift note |
 | 5 | 2026-07-16 | policy | RL it12 (BC + 12 self-play iters) | `f8e7e65` | policy_rl_it12.npz | **552.6** | RL beats heuristic by +105 concurrent — first real gain |
 | 6 | 2026-07-17 | policy | RL it18: +24 iters from it12; 58.0% vs it12 @300 games (it13 54.3, it24 52.3) | `b4a243b` | policy_rl_it18.npz | 499.8 | settled over weekend; concurrent pair with #7 |
-| 7 | 2026-07-17 | policy | RL v2-lineage 30 iters (identity emb); 57.0% vs it18 @300 (it5 56.0, it12 52.0) | `3b13645-dirty` | policy_rl_v2_it30.npz | 493.2 | TIE with #6 (gap 6.6 << noise): identity emb = no ladder gain |
-| 8 | 2026-07-20 | policy | diversified-pool RL it12 (holdout-validated); panel agg 80.9% vs base 78.2%, latias holdout +3.2 | `0d130d5` | policy_rl_pool_it12.npz | pending |  |
+| 7 | 2026-07-17 | policy | RL v2-lineage 30 iters (identity emb); 57.0% vs it18 @300 (it5 56.0, it12 52.0) | `3b13645-dirty` | policy_rl_v2_it30.npz | 477 | re-read @4 days: further drift down from 493.2 (weekend read). Confirms drift, not a real change. |
+| 8 | 2026-07-20 | policy | diversified-pool RL it12 (holdout-validated); panel agg 80.9% vs base 78.2%, latias holdout +3.2 | `0d130d5` | policy_rl_pool_it12.npz | 535.3 | +58.3 CONCURRENT vs v2-it30 (477) @21h. Panel/holdout selection's first ladder-confirmed win. |
 
 ## What each rating taught us
 
@@ -65,6 +65,21 @@ ladder doesn't measure; gains that don't generalize beyond the mirror don't move
 generalization against the FIELD** — diverse-opponent training and diverse-panel
 evaluation — and/or a representation step-change (id-bag state features), not another
 2-3% mirror edge.
+
+**#7 vs #8 — the panel pivot is ladder-confirmed.** it12 (diversified RL pool + frozen
+champions as opponents + Latias held out of training) reads **535.3** vs v2-it30's
+**477**, both current: **+58.3 concurrent**, well clear of every noise bound seen so far
+(6.6-pt tie, 136-pt @1h spread). This is the **second confirmed real gain** in the whole
+project (after #4 vs #5's +105), and the **first time the eval-panel instrument correctly
+called a ladder outcome** where mirror selection had just failed on the same lineage.
+Locally, it12 was picked because it improved EVERY headroom row including the sealed
+Latias holdout (+3.2) while a sibling checkpoint (it16) regressed on that same holdout
+despite gaining vs trained-on opponents — i.e. the holdout caught overfitting the panel
+would have missed by aggregate alone. Confirms: (1) diversify the RL opponent POOL, not
+just add more self-play iterations, (2) select with a holdout-containing panel, never
+the mirror, (3) `v2-it30`'s repeated re-reads (493.2 weekend -> 477 @4d) reconfirm
+absolute-rating drift yet again — always re-read the CONCURRENT baseline, not a
+remembered number.
 
 ## Local proxies (NOT ladder truth — recorded to check calibration later)
 
