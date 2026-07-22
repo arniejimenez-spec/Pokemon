@@ -81,6 +81,22 @@ the mirror, (3) `v2-it30`'s repeated re-reads (493.2 weekend -> 477 @4d) reconfi
 absolute-rating drift yet again — always re-read the CONCURRENT baseline, not a
 remembered number.
 
+**Cycle 2 (2026-07-21/22) — the recipe saturates after one cycle; it12 holds.** Continued
+diversified RL from it12 (16 iters, it12 added to its own opponent pool so the next
+generation had to beat the reigning champion, not just its ancestors). Panel vs it12
+(250 games/opponent): candidates it10/it14/it16 ALL lost the direct head-to-head to it12
+(46.0%/44.8%/47.6%) despite mixed holdout numbers (it14 +2.4 on Latias but the worst
+head-to-head of the three; it16, the most-trained checkpoint, repeated the exact
+overfitting pattern from cycle 1 — holdout −12.8 as training continued). **No ship. it12
+remains champion.** One run in this cycle also hung for ~6 hours (workers alive but <1
+CPU-second consumed — a real deadlock, not slowness); resumed cleanly from the last valid
+checkpoint (it14) with no code changes, so likely a transient multiprocessing/Windows
+issue rather than a reproducible bug — watch for recurrence.
+Conclusion: the diversified-pool RECIPE was the source of the cycle-1 gain, not RL
+iteration count in general — simply running more iterations against the same fixed
+opponent pool does not compound. Getting a further gain likely needs a NEW ingredient
+(wider/rotating opponent pool, or the v3 representation rebuild), not more of the same.
+
 ## Local proxies (NOT ladder truth — recorded to check calibration later)
 
 | agent | vs random | vs heuristic | vs frozen BC | notes |

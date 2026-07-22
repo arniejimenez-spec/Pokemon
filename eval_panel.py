@@ -24,12 +24,13 @@ from harness import run_match
 
 # name -> (make_opponent, note). Latias is HELD OUT of RL training on purpose.
 def _panel(champion_path: str):
+    champ_label = os.path.splitext(os.path.basename(champion_path))[0]
     return [
         ("heur-lucario", lambda: heur(LUCARIO), "mirror deck, scripted pilot"),
         ("zacian",       lambda: heur(GAUNTLET["zacian"]), "Metal, in training pool"),
         ("yveltal",      lambda: heur(GAUNTLET["yveltal"]), "Dark, in training pool"),
         ("latias",       lambda: heur(GAUNTLET["latias"]), "Psychic HOLDOUT + weakness"),
-        ("it18",         lambda: pol(LUCARIO, model_path=champion_path), "v1-lineage champion"),
+        (champ_label,    lambda: pol(LUCARIO, model_path=champion_path), "reigning champion (head-to-head)"),
     ]
 
 
@@ -66,8 +67,8 @@ def main():
         print(f"\n=== PANEL: {m} ({args.games} games/opponent) ===")
         rows = panel_score(m, args.games, args.champion)
         for name, (r, s, note) in rows.items():
-            flag = "  <== holdout" if name == "latias" else ""
-            print(f"  {name:14s} {r:6.1%}  ({s}) {note}{flag}", flush=True)
+            flag = "  <== HOLDOUT" if name == "latias" else ""
+            print(f"  {name:20s} {r:6.1%}  ({s}) {note}{flag}", flush=True)
     print("DONE")
 
 
