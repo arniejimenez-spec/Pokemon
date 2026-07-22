@@ -38,9 +38,11 @@ def build(attacker_id: int, energy_id: int, n_attacker: int = 4) -> list[int]:
 ZACIAN = build(336, 8)          # Metal   (Slashing Strike 210)
 YVELTAL = build(1062, 7)        # Dark    (Dark Strike 210)
 LATIAS = build(184, 5)          # Psychic (Eon Blade 200) — tests Lucario's {P} weakness
+TERAPAGOS = build(176, 4)       # Colorless/Lightning (Unified Beatdown, bench-scaling)
 
 GAUNTLET = {
     "zacian": ZACIAN,
     "yveltal": YVELTAL,
     "latias": LATIAS,
+    "terapagos": TERAPAGOS,
 }

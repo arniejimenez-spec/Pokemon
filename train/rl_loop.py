@@ -140,7 +140,11 @@ def generate(model_path, n_games, workers, temperature, seed, pool_kinds=None):
     # so training mixes frozen champion POLICIES with off-deck opponents instead of
     # being Lucario-self-heavy. Latias is excluded -> eval holdout.
     if pool_kinds is None:
-        pool_kinds = ["self", "heuristic", "zacian", "yveltal"]
+        # Cycle-3 widening: cycle 2 showed more RL iters against a FIXED pool does
+        # not compound -- the cycle-1 gain came from the pool-diversification change
+        # itself. So this cycle's single variable is a genuinely new deck archetype
+        # (Terapagos, Colorless/Lightning) rather than more of the same opponents.
+        pool_kinds = ["self", "heuristic", "zacian", "yveltal", "terapagos"]
         for champ in ("models/policy_rl_it18.npz", "models/policy_rl_v2_it30.npz",
                       "models/policy_rl_pool_it12.npz"):
             p = os.path.join(ROOT, champ)
