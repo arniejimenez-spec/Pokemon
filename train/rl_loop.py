@@ -36,6 +36,8 @@ import numpy as np
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
+BAG_NAMES = ("hand", "deckrem", "owndisc", "oppdisc")   # must match features_v3 order
+
 
 # ───────────────────────── self-play data generation ─────────────────────────
 
@@ -78,6 +80,8 @@ def _selfplay(args):
 
     states, opts, ptr, ys = [], [], [0], []
     opt_ids = []
+    bag_chunks = {name: [] for name in BAG_NAMES}
+    bag_ptr = {name: [0] for name in BAG_NAMES}
     rewards = []
 
     for _ in range(n_games):
@@ -95,8 +99,9 @@ def _selfplay(args):
             if seat == 0:
                 learnable = (n_opt > 1 and sel.minCount == 1 and sel.maxCount == 1)
                 if learnable:
-                    s, om, ids = learner.net.encode(o)
-                    z = learner.net.logits(s, om, ids)
+                    enc = learner.net.encode(o, LUCARIO)   # learner always pilots LUCARIO
+                    s, om, ids = enc[0], enc[1], enc[2]
+                    z = learner.net.logits(*enc)
                     if not np.all(np.isfinite(z)):
                         play = learner.fallback.select(o)
                     else:
@@ -105,8 +110,12 @@ def _selfplay(args):
                         p /= p.sum()
                         a = int(rng.choice(n_opt, p=p))
                         states.append(s); opts.append(om)
-                        if fv == 2:
+                        if fv >= 2:
                             opt_ids.append(ids)
+                        if fv == 3:
+                            for name, arr in zip(BAG_NAMES, enc[3:7]):
+                                bag_chunks[name].append(np.asarray(arr, dtype=np.int32))
+                                bag_ptr[name].append(bag_ptr[name][-1] + len(arr))
                         ptr.append(ptr[-1] + n_opt); ys.append(a)
                         play = [a]
                 else:
@@ -126,12 +135,19 @@ def _selfplay(args):
 
     if not ys:
         return None
+    bags = None
+    if fv == 3:
+        bags = {name: (np.concatenate(bag_chunks[name]).astype(np.int32) if bag_chunks[name]
+                       else np.array([], dtype=np.int32),
+                      np.array(bag_ptr[name], dtype=np.int64))
+                for name in BAG_NAMES}
     return (np.stack(states).astype(np.float32),
             np.concatenate(opts).astype(np.float32),
             np.array(ptr, dtype=np.int64),
             np.array(ys, dtype=np.int16),
             np.array(rewards, dtype=np.float32),
-            (np.concatenate(opt_ids).astype(np.int64) if fv == 2 else None))
+            (np.concatenate(opt_ids).astype(np.int64) if fv >= 2 else None),
+            bags)
 
 
 def generate(model_path, n_games, workers, temperature, seed, pool_kinds=None):
@@ -168,7 +184,21 @@ def generate(model_path, n_games, workers, temperature, seed, pool_kinds=None):
         ptr_list.extend((r[2][1:] + off).tolist())
         off += r[1].shape[0]
     ids = (np.concatenate([r[5] for r in res]) if res[0][5] is not None else None)
-    return states, np.concatenate(opt_list), np.array(ptr_list, dtype=np.int64), ys, rew, ids
+
+    bags = None
+    if res[0][6] is not None:
+        bags = {}
+        for name in BAG_NAMES:
+            id_list, bptr_list, boff = [], [0], 0
+            for r in res:
+                bids, bptr = r[6][name]
+                id_list.append(bids)
+                bptr_list.extend((bptr[1:] + boff).tolist())
+                boff += bids.shape[0]
+            bags[name] = (np.concatenate(id_list) if id_list else np.array([], dtype=np.int32),
+                         np.array(bptr_list, dtype=np.int64))
+
+    return states, np.concatenate(opt_list), np.array(ptr_list, dtype=np.int64), ys, rew, ids, bags
 
 
 # ───────────────────────────── torch model I/O ───────────────────────────────
@@ -195,16 +225,21 @@ def load_torch(model_path):
         head_v.weight.data = torch.tensor(z["Wv"].T.copy())
         head_v.bias.data = torch.tensor(z["bv"].copy())
     emb = None
-    if "Wemb" in z.files:            # v2: learned card-id embedding
+    if "Wemb" in z.files:            # v2+: learned per-option card-id embedding
         Wemb = z["Wemb"]
         emb = nn.Embedding(Wemb.shape[0], Wemb.shape[1], padding_idx=0)
         emb.weight.data = torch.tensor(Wemb.copy())
+    emb_state = None
+    if "Wemb_state" in z.files:      # v3: learned state-bag embedding (separate table)
+        Wes = z["Wemb_state"]
+        emb_state = nn.Embedding(Wes.shape[0], Wes.shape[1], padding_idx=0)
+        emb_state.weight.data = torch.tensor(Wes.copy())
     norm = {k: z[k] for k in ("s_mu", "s_sd", "o_mu", "o_sd")}
     fv = int(z["feature_version"][0]) if "feature_version" in z.files else 1
-    return trunk, head_pi, head_v, emb, norm, fv
+    return trunk, head_pi, head_v, emb, emb_state, norm, fv
 
 
-def export(path, trunk, head_pi, head_v, emb, norm, fv):
+def export(path, trunk, head_pi, head_v, emb, emb_state, norm, fv):
     import torch.nn as nn
     w = {k: v.astype(np.float32) for k, v in norm.items()}
     w["feature_version"] = np.array([fv], dtype=np.int32)
@@ -220,6 +255,8 @@ def export(path, trunk, head_pi, head_v, emb, norm, fv):
     w["bv"] = head_v.bias.detach().numpy().astype(np.float32)
     if emb is not None:
         w["Wemb"] = emb.weight.detach().numpy().astype(np.float32)
+    if emb_state is not None:
+        w["Wemb_state"] = emb_state.weight.detach().numpy().astype(np.float32)
     w["n_layers"] = np.array([li], dtype=np.int32)
     np.savez_compressed(path, **w)
 
@@ -230,12 +267,17 @@ def rl_update(model_path, data, lr, epochs, batch, ent_coef, clip_kl):
     import torch
     import torch.nn as nn
 
-    states, opts, ptr, ys, rew, ids = data
-    trunk, head_pi, head_v, emb, norm, fv = load_torch(model_path)
+    states, opts, ptr, ys, rew, ids, bags = data
+    trunk, head_pi, head_v, emb, emb_state, norm, fv = load_torch(model_path)
     params = list(trunk.parameters()) + list(head_pi.parameters()) + list(head_v.parameters())
     if emb is not None:
         params += list(emb.parameters())
+    if emb_state is not None:
+        params += list(emb_state.parameters())
     optim = torch.optim.Adam(params, lr=lr)
+
+    EMB_DIM = emb_state.embedding_dim if emb_state is not None else 0
+    N_CARD_IDS = emb_state.num_embeddings if emb_state is not None else 0
 
     S = torch.from_numpy(np.clip((states - norm["s_mu"]) / norm["s_sd"], -10, 10).astype(np.float32))
     O = torch.from_numpy(np.clip((opts - norm["o_mu"]) / norm["o_sd"], -10, 10).astype(np.float32))
@@ -244,6 +286,24 @@ def rl_update(model_path, data, lr, epochs, batch, ent_coef, clip_kl):
     Y = torch.from_numpy(ys.astype(np.int64))
     R = torch.from_numpy(rew)
     n_dec = len(ys)
+
+    bag_tensors = None
+    if bags is not None:
+        bag_tensors = {name: (torch.from_numpy(np.clip(bags[name][0], 0, N_CARD_IDS - 1).astype(np.int64)),
+                              torch.from_numpy(bags[name][1]))
+                       for name in BAG_NAMES}
+
+    def pool_bag(dec, ids_all, bag_ptr):
+        """Sum-pool one bag's embeddings per decision -- decision granularity, not
+        per-option -- via the same scatter-add trick as the option segment-softmax."""
+        counts = (bag_ptr[dec + 1] - bag_ptr[dec]).long()
+        if counts.sum() == 0:
+            return torch.zeros(len(dec), EMB_DIM)
+        rows = torch.cat([torch.arange(bag_ptr[i], bag_ptr[i + 1]) for i in dec])
+        seg = torch.repeat_interleave(torch.arange(len(dec)), counts)
+        vecs = emb_state(ids_all[rows])
+        return torch.zeros(len(dec), EMB_DIM).scatter_add(
+            0, seg.unsqueeze(-1).expand(-1, EMB_DIM), vecs)
 
     stats = {}
     for ep in range(epochs):
@@ -256,6 +316,11 @@ def rl_update(model_path, data, lr, epochs, batch, ent_coef, clip_kl):
             parts = [S[dec][seg], O[rows]]
             if emb is not None:
                 parts.append(emb(IDS[rows]))
+            if emb_state is not None:
+                for name in BAG_NAMES:
+                    ids_all, bag_ptr = bag_tensors[name]
+                    bv = pool_bag(dec, ids_all, bag_ptr)   # [len(dec), EMB_DIM]
+                    parts.append(bv[seg])                   # broadcast to option rows
             x = torch.cat(parts, dim=1)
 
             h = trunk(x)
@@ -299,7 +364,7 @@ def rl_update(model_path, data, lr, epochs, batch, ent_coef, clip_kl):
             torch.nn.utils.clip_grad_norm_(params, 1.0)
             optim.step()
         stats = {"entropy": float(ent.detach()), "value_loss": float(loss_v.detach())}
-    return trunk, head_pi, head_v, emb, norm, fv, stats
+    return trunk, head_pi, head_v, emb, emb_state, norm, fv, stats
 
 
 # ───────────────────────────────── evaluation ────────────────────────────────
@@ -365,10 +430,10 @@ def main():
         t_gen = time.perf_counter() - t0
 
         t1 = time.perf_counter()
-        trunk, hpi, hv, emb, norm, fv, st = rl_update(cur, data, args.lr, args.epochs,
-                                                      args.batch, args.ent, None)
+        trunk, hpi, hv, emb, emb_state, norm, fv, st = rl_update(cur, data, args.lr, args.epochs,
+                                                                  args.batch, args.ent, None)
         path = os.path.join(args.outdir, f"policy_it{it}.npz")
-        export(path, trunk, hpi, hv, emb, norm, fv)
+        export(path, trunk, hpi, hv, emb, emb_state, norm, fv)
         z = np.load(path)
         if not all(np.all(np.isfinite(z[k])) for k in z.files):
             print(f"[iter {it}] exported weights contain non-finite values -- "
