@@ -28,9 +28,11 @@ class PolicyNet:
     """Minimal MLP forward pass in numpy.
 
     Dispatches on the feature_version stored in the weights: v1 = attributes only,
-    v2 = attributes + a learned card-id embedding per option (fixes the v1 blindness
-    where e.g. all Items share identical attribute vectors). Shipped v1 models keep
-    working unchanged.
+    v2 = + a learned card-id embedding per option (fixes the v1 blindness where
+    e.g. all Items share identical attribute vectors), v3 = + four state-level
+    id-bags (own hand / deck-remaining / own discard / opp discard) summed
+    through a second learned embedding table. Shipped v1/v2 models keep working
+    unchanged.
     """
 
     def __init__(self, path: str):
@@ -43,6 +45,7 @@ class PolicyNet:
         self.Wpi, self.bpi = z["Wpi"], z["bpi"]
         self.fv = int(z["feature_version"][0]) if "feature_version" in z else -1
         self.Wemb = z["Wemb"] if "Wemb" in z.files else None
+        self.Wemb_state = z["Wemb_state"] if "Wemb_state" in z.files else None
         if self.fv == 1:
             self.F = F
         elif self.fv == 2:
@@ -53,27 +56,54 @@ class PolicyNet:
             except ImportError:
                 import features_v2 as F2
             self.F = F2
+        elif self.fv == 3:
+            if self.Wemb is None or self.Wemb_state is None:
+                raise ValueError("v3 weights missing Wemb/Wemb_state")
+            try:
+                from agents import features_v3 as F3
+            except ImportError:
+                import features_v3 as F3
+            self.F = F3
         else:
             raise ValueError(f"unsupported feature_version {self.fv}")
 
-    def encode(self, obs):
-        """Return the per-option network inputs pieces for this model's version."""
+    def encode(self, obs, deck=None):
+        """Return a fixed 7-tuple regardless of version:
+        (state, opts, option_ids, hand_ids, deckrem_ids, owndisc_ids, oppdisc_ids)
+        -- fields the version doesn't use are None.
+        """
         if self.fv == 1:
             s, o = self.F.encode(obs)
-            return s, o, None
-        return self.F.encode(obs)   # v2: (state, opts, ids)
+            return s, o, None, None, None, None, None
+        if self.fv == 2:
+            s, o, ids = self.F.encode(obs)
+            return s, o, ids, None, None, None, None
+        return self.F.encode(obs, deck)   # v3: already the full 7-tuple
+
+    def _embed_bag(self, ids) -> np.ndarray:
+        if ids is None or len(ids) == 0:
+            return np.zeros(self.Wemb_state.shape[1], dtype=np.float32)
+        safe = np.clip(np.asarray(ids), 0, self.Wemb_state.shape[0] - 1)
+        return self.Wemb_state[safe].sum(axis=0)
 
     def logits(self, state: np.ndarray, opts: np.ndarray,
-               ids: np.ndarray | None = None) -> np.ndarray:
+               option_ids: np.ndarray | None = None,
+               hand_ids=None, deckrem_ids=None, owndisc_ids=None, oppdisc_ids=None
+               ) -> np.ndarray:
         # Clip must match the trainer exactly: out-of-distribution values (unseen
         # contexts/cards on the ladder) would otherwise explode through the
         # near-constant one-hot dims and wreck the logits.
         s = np.clip((state - self.s_mu) / self.s_sd, -10, 10)
         o = np.clip((opts - self.o_mu) / self.o_sd, -10, 10)
-        parts = [np.repeat(s[None, :], o.shape[0], axis=0), o]
-        if self.fv == 2:
-            safe = np.where((ids > 0) & (ids < self.Wemb.shape[0]), ids, 0)
+        n = o.shape[0]
+        parts = [np.repeat(s[None, :], n, axis=0), o]
+        if option_ids is not None and self.Wemb is not None:
+            safe = np.where((option_ids > 0) & (option_ids < self.Wemb.shape[0]), option_ids, 0)
             parts.append(self.Wemb[safe])   # embeddings are not standardised
+        if self.Wemb_state is not None:
+            for bag in (hand_ids, deckrem_ids, owndisc_ids, oppdisc_ids):
+                vec = self._embed_bag(bag)
+                parts.append(np.repeat(vec[None, :], n, axis=0))
         x = np.concatenate(parts, axis=1)
         for W, b in zip(self.W, self.b):
             x = np.maximum(x @ W + b, 0.0)   # relu
@@ -120,8 +150,8 @@ class PolicyAgent:
             return self.fallback.select(obs)
 
         try:
-            state, om, ids = self.net.encode(obs)
-            z = self.net.logits(state, om, ids)
+            enc = self.net.encode(obs, self.deck)
+            z = self.net.logits(*enc)
             if not np.all(np.isfinite(z)):
                 return self.fallback.select(obs)
             k = hi if hi == lo else max(lo, 1)
