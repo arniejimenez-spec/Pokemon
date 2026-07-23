@@ -115,6 +115,24 @@ different lever: the v3 id-bag representation (hand/deck/discard CONTENTS as fea
 not just counts — what the official sample notebook and the ~1000-rated field use), not
 another RL cycle on the same architecture.
 
+**v3 (2026-07-24) — PAUSED, not disproven: real training-budget confound.** Built and
+fully verified the v3 architecture (id-bag state features: hand/deck-remaining/own-
+discard/opp-discard, embedded and pooled — see agents/features_v3.py; numpy/torch
+parity 1.46e-06 on real games; a real, non-obvious encoder bug found and fixed via an
+invariant check along the way). Ran the SAME diversified-pool recipe from a fresh v3
+BC base, 16 RL iterations. Panel vs champion it12 (250 games/opponent): v3-it6/it9/it16
+LOSE on every row incl. head-to-head (28.8/34.8/45.2%) and the holdout (47.6/60.8/54.4%
+vs it12's ~75.2%). **No ship.**
+BUT this is not apples-to-apples: it12 carries ~42+ cumulative RL iterations (30 on the
+v2 lineage + 12 more diversified-pool), while this v3 run only has 16 iterations total
+from a fresh BC base. The head-to-head score nearly doubled across the run (28.8% ->
+45.2%) with no sign of plateauing — consistent with "under-trained", not "architecture
+doesn't work". Decision: PAUSE v3 given time-to-deadline constraints rather than invest
+~45-60 more minutes to equalize training and get a fair read. The code, data pipeline,
+and BC/RL checkpoints are kept (not deleted) in case there's time to revisit later.
+Do not cite this cycle as "v3 was worse than v1/v2" — the honest conclusion is
+**inconclusive under a fair comparison**, and current effort returns to the it12 lineage.
+
 ## Local proxies (NOT ladder truth — recorded to check calibration later)
 
 | agent | vs random | vs heuristic | vs frozen BC | notes |
