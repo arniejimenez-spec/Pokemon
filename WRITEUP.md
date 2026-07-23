@@ -105,12 +105,15 @@ direction.
 We then ran four further single-variable experiments against the new champion, to
 see whether the anti-mirror recipe itself could be pushed further:
 
-| Experiment | Single variable changed | Outcome |
-|---|---|---|
-| Cycle 2 | More RL iterations, same opponent pool | No further gain (null) |
-| Cycle 3 | One additional deck archetype in the pool | No further gain (null) |
-| Cycle 4 | Lower learning rate | Broke a 3-cycle overfitting pattern; promising, not yet conclusive |
-| Richer state features | Opponent's revealed hand/discard contents as learned embeddings | Fully built and verified; paused on an uncontrolled training-budget confound before a fair read |
+- Cycle 2 — more RL iterations against the same opponent pool: no further gain (a
+  null result).
+- Cycle 3 — one additional deck archetype added to the training pool: no further
+  gain (a null result).
+- Cycle 4 — a lower learning rate: broke a three-cycle overfitting pattern seen in
+  cycles 1–3; promising, but not yet conclusive.
+- Richer state features — the opponent's revealed hand and discard contents as
+  learned embeddings: fully built and verified, but paused on an uncontrolled
+  training-budget confound before a fair comparison could be made.
 
 The consistent finding: our one confirmed gain came from a **structural** change
 (who the agent trains against), not from spending more compute on an unchanged
@@ -120,13 +123,17 @@ self-play training actually lives for this problem.
 
 ## 7. Results and reflection
 
-| Milestone | Ladder rating | Note |
-|---|---|---|
-| Rule-based heuristic | 601 | Baseline; starting rating is 600 |
-| Determinized search + opponent model | 456 | Regression — circular local evaluation |
-| BC + self-play RL (first version) | +105 vs. concurrent heuristic | First confirmed, non-circular win |
-| Mirror-selected "improvement" | ≈ tie (6.6 pts) vs. its predecessor | Mirror evaluation, same circularity in disguise |
-| Anti-mirror pivot (diverse pool + holdout panel) | **+58.3 vs. concurrent prior best** | Largest confirmed gain; current standing submission |
+- Rule-based heuristic — ladder rating **601** (baseline; the rating system starts
+  everyone at 600).
+- Determinized search + opponent model — ladder rating **456**, a regression,
+  caused by circular local evaluation.
+- BC + self-play RL, first version — **+105 points** versus a concurrent
+  heuristic reading, our first confirmed, non-circular win.
+- Mirror-selected "improvement" — read as a statistical **tie** against its
+  predecessor (a 6.6-point gap), the same circularity in a new disguise.
+- Anti-mirror pivot (diverse training pool + held-out evaluation panel) —
+  **+58.3 points** versus the concurrent prior best, our largest confirmed gain
+  and the current standing submission.
 
 All comparisons above are **concurrent** (measured against a same-moment baseline,
 not a remembered number) — we found early on that absolute ladder ratings drift by
@@ -135,9 +142,6 @@ non-concurrent comparison meaningless.
 
 Given the competition deadline, we chose to stop active experimentation and
 preserve this validated result rather than continue spending ladder submissions
-chasing gains our own methodology had just shown were unconfirmed or exhausted —
-a decision made from evidence, not from running out of ideas. Given the competition deadline, we chose to stop active experimentation
-and preserve this validated result rather than continue spending ladder submissions
 chasing gains our own methodology had just shown were unconfirmed or exhausted —
 a decision made from evidence, not from running out of ideas.
 
