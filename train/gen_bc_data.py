@@ -26,6 +26,30 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# v3's four state-level bags, in a fixed order shared by the worker, the
+# merge step, and the saved npz key names.
+BAG_NAMES = ("hand", "deckrem", "owndisc", "oppdisc")
+
+
+class RaggedList:
+    """Accumulates variable-length int arrays, one per decision, with a ptr
+    array marking decision boundaries -- the same ragged-storage pattern
+    already used for `opts`/`opt_ptr`, reused here for the four v3 bags so we
+    don't hand-roll the same ptr bookkeeping four more times."""
+
+    def __init__(self):
+        self.chunks = []
+        self.ptr = [0]
+
+    def add(self, arr):
+        arr = np.asarray(arr, dtype=np.int32)
+        self.chunks.append(arr)
+        self.ptr.append(self.ptr[-1] + len(arr))
+
+    def arrays(self):
+        ids = np.concatenate(self.chunks) if self.chunks else np.array([], dtype=np.int32)
+        return ids, np.array(self.ptr, dtype=np.int64)
+
 
 def _play_games(args):
     """Worker: play `n_games` and return arrays for the decisions seen."""
@@ -34,7 +58,9 @@ def _play_games(args):
     from decks.mega_lucario import DECK as LUCARIO
     from decks.gauntlet import GAUNTLET
     from agents.heuristic import HeuristicPolicy
-    if fv == 2:
+    if fv == 3:
+        from agents import features_v3 as F
+    elif fv == 2:
         from agents import features_v2 as F
     else:
         from agents import features as F
@@ -48,7 +74,7 @@ def _play_games(args):
 
     states, opts, ptr, ys, seats, turns = [], [], [0], [], [], []
     opt_ids = []
-    game_of_decision = []
+    bags = {name: RaggedList() for name in BAG_NAMES}
     game_winner = []
 
     for g in range(n_games):
@@ -68,16 +94,18 @@ def _play_games(args):
             choice = pols[seat].select(o)
 
             if recordable:
-                enc = F.encode(o)
+                enc = F.encode(o, decks[seat]) if fv == 3 else F.encode(o)
                 states.append(enc[0])
                 opts.append(enc[1])
-                if fv == 2:
+                if fv >= 2:
                     opt_ids.append(enc[2])
+                if fv == 3:
+                    for name, arr in zip(BAG_NAMES, enc[3:7]):
+                        bags[name].add(arr)
                 ptr.append(ptr[-1] + n_opt)
                 ys.append(choice[0])
                 seats.append(seat)
                 turns.append(min(o.current.turn, 40))
-                game_of_decision.append(g)
 
             # exploration: play a random legal option, but the label above stays expert
             if epsilon > 0 and n_opt > 1 and rng.random() < epsilon:
@@ -98,6 +126,7 @@ def _play_games(args):
 
     if not ys:
         return None
+    bag_arrays = {name: bags[name].arrays() for name in BAG_NAMES} if fv == 3 else None
     return (
         np.stack(states).astype(np.float32),
         np.concatenate(opts).astype(np.float32),
@@ -106,7 +135,8 @@ def _play_games(args):
         np.array(seats, dtype=np.int8),
         np.array(turns, dtype=np.int16),
         np.array(game_winner, dtype=np.int8),
-        (np.concatenate(opt_ids).astype(np.int16) if fv == 2 else None),
+        (np.concatenate(opt_ids).astype(np.int16) if fv >= 2 else None),
+        bag_arrays,
     )
 
 
@@ -115,7 +145,7 @@ def main():
     p.add_argument("--games", type=int, default=2000, help="total games across all workers")
     p.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1))
     p.add_argument("--epsilon", type=float, default=0.15, help="exploration rate (labels stay expert)")
-    p.add_argument("--fv", type=int, default=1, choices=(1, 2), help="feature version")
+    p.add_argument("--fv", type=int, default=1, choices=(1, 2, 3), help="feature version")
     p.add_argument("--out", default="data")
     p.add_argument("--seed", type=int, default=0)
     args = p.parse_args()
@@ -156,11 +186,26 @@ def main():
     outcome = np.where(wins == 2, 0, np.where(wins == seats, 1, -1)).astype(np.int8)
 
     extra = {}
-    if args.fv == 2:
+    if args.fv >= 2:
         extra["opt_ids"] = np.concatenate([r[7] for r in results])
         assert extra["opt_ids"].shape[0] == opts.shape[0], "opt_ids misaligned"
 
-    path = os.path.join(args.out, "bc_data.npz" if args.fv == 1 else "bc_data_v2.npz")
+    if args.fv == 3:
+        # each of the 4 bags: concat ids across shards, re-base each shard's ptr
+        # by the running id-offset (same pattern as opt_ptr above)
+        for name in BAG_NAMES:
+            id_list, ptr_list, off = [], [0], 0
+            for r in results:
+                ids, ptr_r = r[8][name]
+                id_list.append(ids)
+                ptr_list.extend((ptr_r[1:] + off).tolist())
+                off += ids.shape[0]
+            extra[f"{name}_ids"] = np.concatenate(id_list) if id_list else np.array([], dtype=np.int32)
+            extra[f"{name}_ptr"] = np.array(ptr_list, dtype=np.int64)
+            assert len(extra[f"{name}_ptr"]) == len(ys) + 1, f"{name}_ptr misaligned"
+
+    names = {1: "bc_data.npz", 2: "bc_data_v2.npz", 3: "bc_data_v3.npz"}
+    path = os.path.join(args.out, names[args.fv])
     np.savez_compressed(path, states=states, opts=opts, opt_ptr=ptr, y=ys,
                         seat=seats, turn=turns, outcome=outcome,
                         feature_version=np.array([args.fv], dtype=np.int32), **extra)
