@@ -133,6 +133,45 @@ and BC/RL checkpoints are kept (not deleted) in case there's time to revisit lat
 Do not cite this cycle as "v3 was worse than v1/v2" — the honest conclusion is
 **inconclusive under a fair comparison**, and current effort returns to the it12 lineage.
 
+**Cycle 4 (2026-07-24) — lower LR avoids the overfit pattern but doesn't clear the ship
+bar either.** Same champion (it12), same diversified pool, same 16 iterations as cycles
+2-3, but LR 2e-4 -> 5e-5 (the one hyperparameter never varied across 3 prior cycles),
+targeting the repeated "longest-trained checkpoint = worst" signature directly. Result:
+that strict monotonic decay is GONE — it3 and it16 (early/late) both land at near-exact
+parity with it12 (46.8%/45.6% head-to-head, statistically a coin flip, not a loss), and
+it7 (mid-run) shows the best result of ANY continuation cycle: 54.4% head-to-head
+(136-114) and holdout 76.4% (slightly above it12's own 75.2%). **Still no ship** — 54.4%
+at 250 games doesn't clear the ~56% "clearly wins" bar we've used since cycle 1. But this
+is a qualitatively different, more encouraging result shape than cycles 2-3's clean
+losses: lower LR prevents drift, it just didn't have enough iterations here to convert
+that stability into a confirmed win.
+
+**Deck-scouting side quest (2026-07-24) — validated a real-world Mega Lucario decklist;
+pilotable but not an upgrade.** Applying the Dragapult lesson (pick simple, single-
+attacker archetypes), scouted Limitless TCG's current meta first: Dragapult, Ogerpon Box,
+and even historically-simple Raging Bolt are ALL toolbox decks with many singleton
+attackers and 5-7 energy colors in the current format — a real, repeated pattern (the
+current meta rewards flexibility over simplicity). Real Mega Lucario lists, by contrast,
+are genuinely simple (one variant, 12 core cards) — ported the actual 74th-place NAIC
+2026 list (decks/mega_lucario_v2.py, 18/19 cards legal, same single Special-Red-Card gap
+as before). Validated BEFORE any retrain (the process Dragapult should have gotten): 90%
+vs random, BOTH evolution lines complete reliably (Lucario 15/15, Dudunsparce-support
+13/15 — vs Dragapult's Dusknoir 0/15), deck-out only 13% (vs 53%). Genuinely
+heuristic-pilotable. **But it loses to our current deck head-to-head, 12-18 (40%)** —
+playable, not an upgrade, likely because our current deck's simpler single-energy-color
+design is easier for a generic heuristic to pilot near-optimally. No pipeline rebuild
+pursued.
+
+**PROJECT STATUS (2026-07-24): stopping active experimentation. Standing submission is
+row #8, `policy_rl_pool_it12.npz`, ladder-confirmed 535.3.** Four RL cycles after the
+row-8 win found no further ship-worthy improvement (cycle 2: more iterations, null;
+cycle 3: wider pool, null; v3: paused/inconclusive on a training-budget confound; cycle
+4: lower LR, promising but short of the ship bar). Two deck-level scouting attempts
+(Dragapult, real-world Lucario) found no upgrade either. Decision: preserve it12 as final
+given time-to-deadline rather than continue spending compute/ladder-slots chasing
+marginal or unconfirmed gains. All code, data pipelines, and checkpoints remain in the
+repo/models/ for potential future resumption.
+
 ## Local proxies (NOT ladder truth — recorded to check calibration later)
 
 | agent | vs random | vs heuristic | vs frozen BC | notes |
