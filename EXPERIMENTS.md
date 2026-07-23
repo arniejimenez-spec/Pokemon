@@ -97,6 +97,24 @@ iteration count in general — simply running more iterations against the same f
 opponent pool does not compound. Getting a further gain likely needs a NEW ingredient
 (wider/rotating opponent pool, or the v3 representation rebuild), not more of the same.
 
+**Cycle 3 (2026-07-22/23) — pool WIDENING also fails; it12 holds, recipe plateaued.**
+Tested cycle 2's own recommendation directly: added a genuinely new archetype
+(Terapagos ex, Colorless/Lightning, validated legal + 91.7% heuristic-vs-random, and
+confirmed NOT pathologically long games) to the training pool, 16 more iters from it12.
+Panel vs it12 (250 games/opponent, same panel as cycles 1-2): it5 47.6% head-to-head
+(holdout +1.6), it8 50.0% (dead tie; holdout -6.4), it16 44.0% (worst; holdout -8.4,
+worst). **No candidate beats it12 head-to-head. No ship.** it16 repeats the exact
+overfitting signature for the THIRD cycle running (most-trained checkpoint = worst
+holdout = worst head-to-head) — a reliable pattern now, not noise.
+**Two consecutive null cycles on two different variables (more iterations; a wider
+pool) = the diversified-pool-RL recipe has plateaued at the current champion** (it12,
+130k params, fv=2 identity-embedding features). The cycle-1 gain came from a one-time
+structural change (frozen champions as training opponents); neither more compute nor
+incremental pool-widening reproduces it. A further gain most likely needs a genuinely
+different lever: the v3 id-bag representation (hand/deck/discard CONTENTS as features,
+not just counts — what the official sample notebook and the ~1000-rated field use), not
+another RL cycle on the same architecture.
+
 ## Local proxies (NOT ladder truth — recorded to check calibration later)
 
 | agent | vs random | vs heuristic | vs frozen BC | notes |
